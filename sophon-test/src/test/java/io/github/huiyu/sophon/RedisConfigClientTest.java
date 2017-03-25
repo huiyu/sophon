@@ -43,4 +43,14 @@ public class RedisConfigClientTest {
 
         configClient.close();
     }
+    
+    
+    @Test
+    public void testMessage() throws Exception {
+        RedisConfigClient.Message original = new RedisConfigClient.Message(RedisConfigClient.Message.TYPE_ADD, "name", "value");
+        assertEquals(original, RedisConfigClient.Message.decode(original.encode()));
+        
+        original = new RedisConfigClient.Message(RedisConfigClient.Message.TYPE_DELETE, "name");
+        assertEquals(original, RedisConfigClient.Message.decode(original.encode()));
+    }
 }

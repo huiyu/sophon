@@ -20,6 +20,10 @@
         <module>sophon-web</module>
         <module>sophon-test</module>
     </modules>
+    
+    <properties>
+        <curator.version>2.12.0</curator.version>
+    </properties>
 
     <dependencyManagement>
         <dependencies>
@@ -31,13 +35,12 @@
             <dependency>
                 <groupId>org.apache.curator</groupId>
                 <artifactId>curator-recipes</artifactId>
-                <version>3.2.1</version>
+                <version>${curator.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.curator</groupId>
                 <artifactId>curator-test</artifactId>
-                <version>3.2.1</version>
-                <scope>test</scope>
+                <version>${curator.version}</version>
             </dependency>
             <dependency>
                 <groupId>redis.clients</groupId>
