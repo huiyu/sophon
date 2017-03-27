@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ZookeeperConfigClient extends AbstractConfigClient {
 
@@ -23,6 +25,9 @@ public class ZookeeperConfigClient extends AbstractConfigClient {
     private final Map<String, String> configs = new ConcurrentHashMap<>();
     private final CuratorFramework zkClient;
     private final PathChildrenCache watcher;
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition condition = lock.newCondition();
 
     public ZookeeperConfigClient(String application, String zookeeperAddress) {
         super(application);
@@ -44,33 +49,41 @@ public class ZookeeperConfigClient extends AbstractConfigClient {
             throw new ConfigException(e);
         }
 
-        watcher = new PathChildrenCache(
-                zkClient, appPath, false);
+        watcher = new PathChildrenCache(zkClient, appPath, false);
         watcher.getListenable().addListener((client, event) -> {
-            switch (event.getType()) {
-                case CHILD_ADDED: {
-                    String path = event.getData().getPath();
-                    String name = parseName(path);
-                    String data = new String(zkClient.getData().forPath(path), UTF_8);
-                    configs.put(name, data);
-                    subscribers.forEach(s -> s.onConfigAdded(name, data));
-                    break;
+            final ReentrantLock lock = this.lock;
+            lock.lock();
+            try {
+                switch (event.getType()) {
+                    case CHILD_ADDED: {
+                        String path = event.getData().getPath();
+                        String name = parseName(path);
+                        String data = new String(zkClient.getData().forPath(path), UTF_8);
+                        configs.put(name, data);
+                        condition.signal();
+                        subscribers.forEach(s -> s.onConfigAdded(name, data));
+                        break;
+                    }
+                    case CHILD_UPDATED: {
+                        String path = event.getData().getPath();
+                        String name = parseName(path);
+                        String data = new String(zkClient.getData().forPath(path), UTF_8);
+                        configs.put(name, data);
+                        condition.signal();
+                        subscribers.forEach(s -> s.onConfigUpdated(name, data));
+                        break;
+                    }
+                    case CHILD_REMOVED: {
+                        String path = event.getData().getPath();
+                        String name = parseName(path);
+                        configs.remove(name);
+                        condition.signal();
+                        subscribers.forEach(s -> s.onConfigDeleted(name));
+                        break;
+                    }
                 }
-                case CHILD_UPDATED: {
-                    String path = event.getData().getPath();
-                    String name = parseName(path);
-                    String data = new String(zkClient.getData().forPath(path), UTF_8);
-                    configs.put(name, data);
-                    subscribers.forEach(s -> s.onConfigUpdated(name, data));
-                    break;
-                }
-                case CHILD_REMOVED: {
-                    String path = event.getData().getPath();
-                    String name = parseName(path);
-                    configs.remove(name);
-                    subscribers.forEach(s -> s.onConfigDeleted(name));
-                    break;
-                }
+            } finally {
+                lock.unlock();
             }
         });
         try {
@@ -92,8 +105,9 @@ public class ZookeeperConfigClient extends AbstractConfigClient {
 
     @Override
     public void set(String name, String value) {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
         try {
-            this.configs.put(name, value);
             String path = makePath(name);
             Stat stat = zkClient.checkExists().forPath(path);
             if (stat != null) {
@@ -107,19 +121,26 @@ public class ZookeeperConfigClient extends AbstractConfigClient {
                 else
                     zkClient.create().creatingParentsIfNeeded().forPath(path);
             }
+            condition.await();
         } catch (Exception e) {
             throw new ConfigException(e);
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void delete(String name) {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
         try {
-            this.configs.remove(name);
             String path = makePath(name);
             zkClient.delete().forPath(path);
+            condition.await();
         } catch (Exception e) {
             throw new ConfigException(e);
+        } finally {
+            lock.unlock();
         }
     }
 

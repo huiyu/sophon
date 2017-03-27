@@ -3,51 +3,46 @@ package io.github.huiyu.sophon;
 import static org.junit.Assert.*;
 
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import redis.embedded.RedisServer;
 
 public class RedisConfigClientTest {
     
-    private RedisServer redisServer;
+    private static RedisServer redisServer;
 
-    @Before
-    public void setUp() throws Exception {
+    @BeforeClass
+    public static void setUp() throws Exception {
         redisServer = new RedisServer(6379);
         redisServer.start();
     }
 
-    @After
-    public void tearDown() throws Exception {
+    @AfterClass
+    public static void tearDown() throws Exception {
         redisServer.stop();
     }
 
     @Test
     public void testBasic() throws Exception {
         RedisConfigClient configClient = new RedisConfigClient("test_app", "localhost", 6379);
-
-        assertNull(configClient.get("key"));
-        
-        // create
-        configClient.set("key", "value");
-        assertEquals("value", configClient.get("key"));
-        
-        // update
-        configClient.set("key", "new_value");
-        assertEquals("new_value", configClient.get("key"));
-        
-        // delete
-        configClient.delete("key");
-        assertNull(configClient.get("key"));
-
+        ConfigClientTests.testBasic(configClient);
         configClient.close();
     }
     
+    @Test
+    public void testSubscriber() throws Exception {
+        RedisConfigClient configClient = new RedisConfigClient("test_app", "localhost", 6379);
+        ConfigClientTests.testSubscriber(configClient);
+        configClient.close();
+    }
     
     @Test
     public void testMessage() throws Exception {
-        RedisConfigClient.Message original = new RedisConfigClient.Message(RedisConfigClient.Message.TYPE_ADD, "name", "value");
+        RedisConfigClient.Message original = 
+                new RedisConfigClient.Message(RedisConfigClient.Message.TYPE_ADD, "name", "value");
         assertEquals(original, RedisConfigClient.Message.decode(original.encode()));
         
         original = new RedisConfigClient.Message(RedisConfigClient.Message.TYPE_DELETE, "name");

@@ -19,32 +19,19 @@ public class RedisConfigClient extends AbstractConfigClient {
     private final Jedis jedis;
     private final String key;
 
+    private final String host;
+    private final int port;
+    
+    private final Subscriber subscriber;
+
     public RedisConfigClient(String application, String host, int port) {
         super(application);
-        key = "sophon_" + application;
-        jedis = new Jedis(host, port);
-
-        jedis.subscribe(new JedisPubSub() {
-
-            @Override
-            public void onMessage(String channel, String message) {
-                Message decode = Message.decode(message);
-                switch (decode.type) {
-                    case Message.TYPE_ADD: {
-                        subscribers.forEach(s -> s.onConfigAdded(decode.name, decode.data));
-                        break;
-                    }
-                    case Message.TYPE_UPDATE: {
-                        subscribers.forEach(s -> s.onConfigUpdated(decode.name, decode.data));
-                        break;
-                    }
-                    case Message.TYPE_DELETE: {
-                        subscribers.forEach(s -> s.onConfigDeleted(decode.name));
-                        break;
-                    }
-                }
-            }
-        }, CHANNEL_NAME);
+        this.host = host;
+        this.port = port;
+        this.key = "sophon_" + application;
+        this.jedis = new Jedis(host, port);
+        this.subscriber = new Subscriber();
+        this.subscriber.start();
     }
 
     @Override
@@ -78,6 +65,7 @@ public class RedisConfigClient extends AbstractConfigClient {
 
     @Override
     public void close() throws IOException {
+        subscriber.shutdown();
         jedis.close();
     }
 
@@ -99,6 +87,16 @@ public class RedisConfigClient extends AbstractConfigClient {
             this.type = type;
             this.name = name;
             this.data = data;
+        }
+
+        static Message decode(String s) {
+            ByteBuffer buf = ByteBuffer.wrap(s.getBytes(UTF_8));
+            byte type = buf.get();
+            byte[] name = new byte[buf.getInt()];
+            byte[] data = new byte[buf.getInt()];
+            buf.get(name);
+            buf.get(data);
+            return new Message(type, new String(name, UTF_8), new String(data));
         }
 
         String encode() {
@@ -125,15 +123,44 @@ public class RedisConfigClient extends AbstractConfigClient {
         public int hashCode() {
             return Objects.hash(type, name, data);
         }
+    }
 
-        static Message decode(String s) {
-            ByteBuffer buf = ByteBuffer.wrap(s.getBytes(UTF_8));
-            byte type = buf.get();
-            byte[] name = new byte[buf.getInt()];
-            byte[] data = new byte[buf.getInt()];
-            buf.get(name);
-            buf.get(data);
-            return new Message(type, new String(name, UTF_8), new String(data));
+    private class Subscriber extends Thread {
+
+        private final Jedis jedis;
+        private final JedisPubSub jedisPubSub = new JedisPubSub() {
+            @Override
+            public void onMessage(String channel, String message) {
+                Message decode = Message.decode(message);
+                switch (decode.type) {
+                    case Message.TYPE_ADD: {
+                        subscribers.forEach(s -> s.onConfigAdded(decode.name, decode.data));
+                        break;
+                    }
+                    case Message.TYPE_UPDATE: {
+                        subscribers.forEach(s -> s.onConfigUpdated(decode.name, decode.data));
+                        break;
+                    }
+                    case Message.TYPE_DELETE: {
+                        subscribers.forEach(s -> s.onConfigDeleted(decode.name));
+                        break;
+                    }
+                }
+            }
+        };
+
+        public Subscriber() {
+            super("thread-config-subscriber:" + application);
+            this.jedis = new Jedis(host, port);
+        }
+
+        @Override
+        public void run() {
+            jedis.subscribe(jedisPubSub, CHANNEL_NAME);
+        }
+
+        public void shutdown() {
+            jedisPubSub.unsubscribe();
         }
     }
 }
